@@ -1,0 +1,36 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual Environments (uv) ---
+.venv/
+venv/
+env/
+
+# --- IDE Settings ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# --- Project Specific (Blurveil) ---
+*.png
+*.jpg
+*.jpeg
+
+!icon.png
+!assets/
+
+# --- Build Artifacts (PyInstaller) ---
+build/
+dist/
+*.spec
+
+# --- Logs ---
+*.log
