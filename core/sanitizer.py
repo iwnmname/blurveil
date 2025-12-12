@@ -14,15 +14,11 @@ PATTERNS = {
 
 def qpixmap_to_cv_image(pixmap: QPixmap):
     qimage = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
-    
     width = qimage.width()
     height = qimage.height()
-    
     ptr = qimage.bits()
     ptr.setsize(height * width * 4)
-    
     arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
-    
     return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
 
 def cv_image_to_qpixmap(cv_img):
@@ -34,11 +30,9 @@ def cv_image_to_qpixmap(cv_img):
 
 def blur_sensitive_data(pixmap: QPixmap) -> QPixmap:
     image = qpixmap_to_cv_image(pixmap)
-    
     data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT, config=TESS_CONFIG)
     
     n_boxes = len(data['text'])
-    
     blur_regions = []
 
     for i in range(n_boxes):
@@ -48,16 +42,13 @@ def blur_sensitive_data(pixmap: QPixmap) -> QPixmap:
             
         for label, pattern in PATTERNS.items():
             if re.search(pattern, text):
-                print(f"Найдено [{label}]: {text}")
                 (x, y, w, h) = (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
-                
                 pad = 5
                 blur_regions.append((max(0, x-pad), max(0, y-pad), w+pad*2, h+pad*2))
                 break
 
     for (x, y, w, h) in blur_regions:
         roi = image[y:y+h, x:x+w]
-        
         if roi.size > 0:
             blurred_roi = cv2.GaussianBlur(roi, (51, 51), 30)
             image[y:y+h, x:x+w] = blurred_roi
