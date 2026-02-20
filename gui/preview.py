@@ -87,12 +87,13 @@ class ImageCanvas(QWidget):
             self._drag_current = event.pos()
             self._is_dragging = False
         elif event.button() == Qt.MouseButton.RightButton:
-            manual_idx = self._manual_region_at(event.pos())
-            if manual_idx is not None:
-                self.blur_regions.pop(manual_idx)
-                if manual_idx < self._manual_start_idx:
+            region_idx = self._any_region_at(event.pos())
+            if region_idx is not None:
+                self.blur_regions.pop(region_idx)
+                if region_idx < self._manual_start_idx:
                     self._manual_start_idx = max(0, self._manual_start_idx - 1)
                 self._hovered_manual_idx = None
+                self._init_blur_state()
                 self._rerender()
 
     def mouseMoveEvent(self, event):
@@ -140,20 +141,22 @@ class ImageCanvas(QWidget):
                     self._rerender()
         else:
             pos = event.pos()
-            region_idx = self._any_region_at(pos)
-            if region_idx is not None:
-                self.blur_regions.pop(region_idx)
-                if region_idx < self._manual_start_idx:
-                    self._manual_start_idx -= 1
-                self._blurred_boxes.discard(region_idx)
-                self._init_blur_state()
-                self._rerender()
-            else:
-                ocr_idx = self._ocr_box_at(pos)
-                if ocr_idx is not None and ocr_idx not in self._blurred_boxes:
+            ocr_idx = self._ocr_box_at(pos)
+            if ocr_idx is not None:
+                if ocr_idx not in self._blurred_boxes:
                     self.blur_regions.insert(self._manual_start_idx, self.ocr_boxes[ocr_idx]["rect"])
                     self._manual_start_idx += 1
                     self._blurred_boxes.add(ocr_idx)
+                    self._rerender()
+                else:
+                    rect = self.ocr_boxes[ocr_idx]["rect"]
+                    for ri, region in enumerate(self.blur_regions):
+                        if tuple(region) == tuple(rect):
+                            self.blur_regions.pop(ri)
+                            if ri < self._manual_start_idx:
+                                self._manual_start_idx -= 1
+                            break
+                    self._init_blur_state()
                     self._rerender()
 
         self._drag_start = None
