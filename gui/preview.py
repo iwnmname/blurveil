@@ -12,34 +12,27 @@ class ImageCanvas(QWidget):
         super().__init__()
         self.cv_image = cv_image
         self.ocr_boxes = ocr_boxes
-        self.blur_regions: list[tuple[int, int, int, int]] = list(auto_regions)
-        self._blurred_boxes: set[int] = set()
-        self._init_blur_state()
-        self._hovered_box_idx: int | None = None
-        self._hovered_manual_idx: int | None = None
+        # Each region: {'rect': (x,y,w,h), 'active': bool, 'auto': bool}
+        self._regions: list[dict] = [{'rect': r, 'active': True, 'auto': True} for r in auto_regions]
+        self._hovered_region_idx: int | None = None
+        self._hovered_ocr_idx: int | None = None
         self._drag_start: QPoint | None = None
         self._drag_current: QPoint | None = None
         self._is_dragging = False
-        self._manual_start_idx = len(auto_regions)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self._rendered_pixmap: QPixmap | None = None
         self._rerender()
 
-    def _init_blur_state(self):
-        self._blurred_boxes.clear()
-        for i, line in enumerate(self.ocr_boxes):
-            lx, ly, lw, lh = line["rect"]
-            for rx, ry, rw, rh in self.blur_regions:
-                if lx < rx + rw and lx + lw > rx and ly < ry + rh and ly + lh > ry:
-                    self._blurred_boxes.add(i)
-                    break
-
     def _rerender(self):
         self._rendered_pixmap = render_image(self.cv_image, self.blur_regions)
         self.update()
 
-    def _img_to_widget(self, rect: tuple[int, int, int, int]) -> QRect:
+    @property
+    def blur_regions(self) -> list[tuple]:
+        return [r['rect'] for r in self._regions if r['active']]
+
+    def _img_to_widget(self, rect: tuple) -> QRect:
         x, y, w, h = rect
         sx, sy, scale = self._scale_params()
         return QRect(int(x * scale + sx), int(y * scale + sy), int(w * scale), int(h * scale))
@@ -58,25 +51,18 @@ class ImageCanvas(QWidget):
         scale = min(ww / pw, wh / ph) if pw and ph else 1.0
         return (ww - pw * scale) / 2, (wh - ph * scale) / 2, scale
 
+    def _region_at(self, pos: QPoint) -> int | None:
+        img_pos = self._widget_to_img(pos)
+        for i, region in enumerate(self._regions):
+            x, y, w, h = region['rect']
+            if x <= img_pos.x() <= x + w and y <= img_pos.y() <= y + h:
+                return i
+        return None
+
     def _ocr_box_at(self, pos: QPoint) -> int | None:
         img_pos = self._widget_to_img(pos)
         for i, line in enumerate(self.ocr_boxes):
             x, y, w, h = line["rect"]
-            if x <= img_pos.x() <= x + w and y <= img_pos.y() <= y + h:
-                return i
-        return None
-
-    def _manual_region_at(self, pos: QPoint) -> int | None:
-        img_pos = self._widget_to_img(pos)
-        for i in range(self._manual_start_idx, len(self.blur_regions)):
-            x, y, w, h = self.blur_regions[i]
-            if x <= img_pos.x() <= x + w and y <= img_pos.y() <= y + h:
-                return i
-        return None
-
-    def _any_region_at(self, pos: QPoint) -> int | None:
-        img_pos = self._widget_to_img(pos)
-        for i, (x, y, w, h) in enumerate(self.blur_regions):
             if x <= img_pos.x() <= x + w and y <= img_pos.y() <= y + h:
                 return i
         return None
@@ -87,12 +73,10 @@ class ImageCanvas(QWidget):
             self._drag_current = event.pos()
             self._is_dragging = False
         elif event.button() == Qt.MouseButton.RightButton:
-            manual_idx = self._manual_region_at(event.pos())
-            if manual_idx is not None:
-                self.blur_regions.pop(manual_idx)
-                if manual_idx < self._manual_start_idx:
-                    self._manual_start_idx = max(0, self._manual_start_idx - 1)
-                self._hovered_manual_idx = None
+            region_idx = self._region_at(event.pos())
+            if region_idx is not None:
+                self._regions.pop(region_idx)
+                self._hovered_region_idx = None
                 self._rerender()
 
     def mouseMoveEvent(self, event):
@@ -107,18 +91,21 @@ class ImageCanvas(QWidget):
                 self.update()
                 return
 
-        prev_ocr = self._hovered_box_idx
-        prev_manual = self._hovered_manual_idx
+        prev_region = self._hovered_region_idx
+        prev_ocr = self._hovered_ocr_idx
 
-        self._hovered_manual_idx = self._manual_region_at(pos)
-        self._hovered_box_idx = self._ocr_box_at(pos) if self._hovered_manual_idx is None else None
+        self._hovered_region_idx = self._region_at(pos)
+        if self._hovered_region_idx is not None:
+            self._hovered_ocr_idx = None
+        else:
+            self._hovered_ocr_idx = self._ocr_box_at(pos)
 
-        if self._hovered_manual_idx is not None or self._any_region_at(pos) is not None or self._hovered_box_idx is not None:
+        if self._hovered_region_idx is not None or self._hovered_ocr_idx is not None:
             self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
 
-        if prev_ocr != self._hovered_box_idx or prev_manual != self._hovered_manual_idx:
+        if prev_region != self._hovered_region_idx or prev_ocr != self._hovered_ocr_idx:
             self.update()
 
     def mouseReleaseEvent(self, event):
@@ -136,24 +123,18 @@ class ImageCanvas(QWidget):
                 w = min(img_w - x, p2.x() - p1.x())
                 h = min(img_h - y, p2.y() - p1.y())
                 if w > 0 and h > 0:
-                    self.blur_regions.append((x, y, w, h))
+                    self._regions.append({'rect': (x, y, w, h), 'active': True, 'auto': False})
                     self._rerender()
         else:
             pos = event.pos()
-            region_idx = self._any_region_at(pos)
+            region_idx = self._region_at(pos)
             if region_idx is not None:
-                self.blur_regions.pop(region_idx)
-                if region_idx < self._manual_start_idx:
-                    self._manual_start_idx -= 1
-                self._blurred_boxes.discard(region_idx)
-                self._init_blur_state()
+                self._regions[region_idx]['active'] = not self._regions[region_idx]['active']
                 self._rerender()
             else:
                 ocr_idx = self._ocr_box_at(pos)
-                if ocr_idx is not None and ocr_idx not in self._blurred_boxes:
-                    self.blur_regions.insert(self._manual_start_idx, self.ocr_boxes[ocr_idx]["rect"])
-                    self._manual_start_idx += 1
-                    self._blurred_boxes.add(ocr_idx)
+                if ocr_idx is not None:
+                    self._regions.append({'rect': tuple(self.ocr_boxes[ocr_idx]["rect"]), 'active': True, 'auto': False})
                     self._rerender()
 
         self._drag_start = None
@@ -161,8 +142,8 @@ class ImageCanvas(QWidget):
         self._is_dragging = False
 
     def leaveEvent(self, event):
-        self._hovered_box_idx = None
-        self._hovered_manual_idx = None
+        self._hovered_region_idx = None
+        self._hovered_ocr_idx = None
         self.update()
 
     def paintEvent(self, event):
@@ -177,14 +158,19 @@ class ImageCanvas(QWidget):
         ph = int(self._rendered_pixmap.height() * scale)
         painter.drawPixmap(int(ox), int(oy), pw, ph, self._rendered_pixmap)
 
-        for i, region in enumerate(self.blur_regions):
-            wr = self._img_to_widget(region)
-            color = QColor(255, 80, 80, 200) if i >= self._manual_start_idx else QColor(255, 160, 0, 200)
-            painter.setPen(QPen(color, 2, Qt.PenStyle.DashLine))
+        for region in self._regions:
+            wr = self._img_to_widget(region['rect'])
+            if region['active']:
+                color = QColor(255, 160, 0, 200) if region['auto'] else QColor(255, 80, 80, 200)
+                painter.setPen(QPen(color, 2, Qt.PenStyle.DashLine))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+            else:
+                painter.setPen(QPen(QColor(160, 160, 160, 180), 2, Qt.PenStyle.DashLine))
+                painter.setBrush(QColor(160, 160, 160, 25))
             painter.drawRect(wr)
 
-        if self._hovered_box_idx is not None and self._hovered_box_idx not in self._blurred_boxes:
-            wr = self._img_to_widget(self.ocr_boxes[self._hovered_box_idx]["rect"])
+        if self._hovered_ocr_idx is not None:
+            wr = self._img_to_widget(self.ocr_boxes[self._hovered_ocr_idx]["rect"])
             painter.setPen(QPen(QColor(80, 160, 255, 220), 2, Qt.PenStyle.SolidLine))
             painter.setBrush(QColor(80, 160, 255, 30))
             painter.drawRect(wr)
