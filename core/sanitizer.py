@@ -4,7 +4,7 @@ import pytesseract
 import re
 from PyQt6.QtGui import QImage, QPixmap
 
-TESS_CONFIG = r'--oem 3 --psm 6'
+TESS_CONFIG = r'--oem 3 --psm 11'
 
 PATTERNS = {
     "Email": r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
@@ -24,7 +24,7 @@ def qpixmap_to_cv_image(pixmap: QPixmap):
 
 
 def cv_image_to_qpixmap(cv_img):
-    height, width, channel = cv_img.shape
+    height, width, _ = cv_img.shape
     bytes_per_line = 3 * width
     cv_img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
     qimage = QImage(cv_img_rgb.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
@@ -36,8 +36,7 @@ def apply_blur_regions(cv_img, regions: list[tuple[int, int, int, int]]):
     for (x, y, w, h) in regions:
         roi = result[y:y+h, x:x+w]
         if roi.size > 0:
-            blurred_roi = cv2.GaussianBlur(roi, (51, 51), 30)
-            result[y:y+h, x:x+w] = blurred_roi
+            result[y:y+h, x:x+w] = cv2.GaussianBlur(roi, (51, 51), 30)
     return result
 
 
@@ -45,60 +44,29 @@ def analyze_image(pixmap: QPixmap) -> dict:
     image = qpixmap_to_cv_image(pixmap)
     data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT, config=TESS_CONFIG)
 
-    lines: dict[tuple, dict] = {}
-    n = len(data['text'])
-    for i in range(n):
-        text = data['text'][i].strip()
-        if not text:
-            continue
-        conf = int(data['conf'][i])
-        if conf < 20:
-            continue
-
-        key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
-        if key not in lines:
-            lines[key] = {'words': [], 'texts': []}
-        lines[key]['words'].append((data['left'][i], data['top'][i], data['width'][i], data['height'][i]))
-        lines[key]['texts'].append(text)
-
-    ocr_lines = []
+    ocr_boxes = []
     auto_regions = []
+    pad = 4
 
-    for key, line in lines.items():
-        words = line['words']
-        texts = line['texts']
-        line_text = ' '.join(texts)
-
-        xs = [x for x, y, w, h in words]
-        ys = [y for x, y, w, h in words]
-        x2s = [x + w for x, y, w, h in words]
-        y2s = [y + h for x, y, w, h in words]
-        lx, ly = min(xs), min(ys)
-        lw, lh = max(x2s) - lx, max(y2s) - ly
-
-        pad = 4
-        line_rect = (max(0, lx - pad), max(0, ly - pad), lw + pad * 2, lh + pad * 2)
-
-        ocr_lines.append({
-            "rect": line_rect,
-            "text": line_text,
-            "words": words,
-        })
-
-        is_sensitive = any(re.search(pattern, line_text) for pattern in PATTERNS.values())
-        if is_sensitive:
-            auto_regions.append(line_rect)
+    for i in range(len(data['text'])):
+        text = data['text'][i].strip()
+        if not text or int(data['conf'][i]) < 20:
+            continue
+        x, y, w, h = data['left'][i], data['top'][i], data['width'][i], data['height'][i]
+        rect = (max(0, x - pad), max(0, y - pad), w + pad * 2, h + pad * 2)
+        ocr_boxes.append({"rect": rect, "text": text})
+        if any(re.search(pattern, text) for pattern in PATTERNS.values()):
+            auto_regions.append(rect)
 
     return {
         "cv_image": image,
-        "ocr_lines": ocr_lines,
+        "ocr_boxes": ocr_boxes,
         "auto_regions": auto_regions,
     }
 
 
 def render_image(cv_image, regions: list[tuple[int, int, int, int]]) -> QPixmap:
-    result = apply_blur_regions(cv_image, regions)
-    return cv_image_to_qpixmap(result)
+    return cv_image_to_qpixmap(apply_blur_regions(cv_image, regions))
 
 
 def save_clean(cv_image, regions: list[tuple[int, int, int, int]], file_path: str) -> bool:
