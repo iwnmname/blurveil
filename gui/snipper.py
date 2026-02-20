@@ -93,7 +93,7 @@ class SnippingWidget(QWidget):
         self.close()
 
     def open_preview(self, result: dict):
-        self.preview = PreviewWindow(result["cv_image"], result["ocr_lines"], result["auto_regions"])
+        self.preview = PreviewWindow(result["cv_image"], result["ocr_boxes"], result["auto_regions"])
         _macos_activate()
         self.preview.show()
         self.preview.activateWindow()
