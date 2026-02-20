@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QRect, QPoint, QSize
 from PyQt6.QtGui import QPainter, QColor, QPixmap, QPen, QCursor
 
-from core.sanitizer import render_image
+from core.sanitizer import render_image, save_clean
 
 
 class ImageCanvas(QWidget):
@@ -264,5 +264,5 @@ class PreviewWindow(QWidget):
             "PNG Images (*.png);;JPEG Images (*.jpg)"
         )
         if file_path:
-            self.canvas.current_pixmap().save(file_path)
+            save_clean(self.canvas.cv_image, self.canvas.blur_regions, file_path)
             self.close()

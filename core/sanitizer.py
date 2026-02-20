@@ -99,3 +99,10 @@ def analyze_image(pixmap: QPixmap) -> dict:
 def render_image(cv_image, regions: list[tuple[int, int, int, int]]) -> QPixmap:
     result = apply_blur_regions(cv_image, regions)
     return cv_image_to_qpixmap(result)
+
+
+def save_clean(cv_image, regions: list[tuple[int, int, int, int]], file_path: str) -> bool:
+    result = apply_blur_regions(cv_image, regions)
+    if file_path.lower().endswith(('.jpg', '.jpeg')):
+        return cv2.imwrite(file_path, result, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    return cv2.imwrite(file_path, result)
