@@ -27,6 +27,7 @@ class ImageCanvas(QWidget):
         self._rerender()
 
     def _init_blur_state(self):
+        self._blurred_boxes.clear()
         for i, line in enumerate(self.ocr_boxes):
             lx, ly, lw, lh = line["rect"]
             for rx, ry, rw, rh in self.blur_regions:
