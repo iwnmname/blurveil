@@ -1,9 +1,8 @@
-import mss
 from PyQt6.QtWidgets import QWidget, QApplication
 from PyQt6.QtCore import Qt, QRect, QPoint
-from PyQt6.QtGui import QPixmap, QPainter, QColor, QImage
+from PyQt6.QtGui import QPainter, QColor
 
-from core.sanitizer import blur_sensitive_data
+from core.sanitizer import analyze_image
 from gui.preview import PreviewWindow
 
 class SnippingWidget(QWidget):
@@ -20,11 +19,7 @@ class SnippingWidget(QWidget):
         virtual_geometry = screen.virtualGeometry()
         self.setGeometry(virtual_geometry)
         
-        with mss.mss() as sct:
-            monitor = sct.monitors[0]
-            sct_img = sct.grab(monitor)
-            img = QImage(sct_img.bgra, sct_img.width, sct_img.height, QImage.Format.Format_ARGB32).copy()
-            self.original_pixmap = QPixmap.fromImage(img)
+        self.original_pixmap = screen.grabWindow(0)
 
         self.pixel_ratio = self.original_pixmap.width() / virtual_geometry.width()
         self.original_pixmap.setDevicePixelRatio(self.pixel_ratio)
@@ -79,11 +74,11 @@ class SnippingWidget(QWidget):
         cropped = self.original_pixmap.copy(x, y, w, h)
         cropped.setDevicePixelRatio(1.0)
         
-        processed_pixmap = blur_sensitive_data(cropped)
-        self.open_preview(processed_pixmap)
-        
+        result = analyze_image(cropped)
+        self.open_preview(result)
+
         self.close()
 
-    def open_preview(self, pixmap):
-        self.preview = PreviewWindow(pixmap)
+    def open_preview(self, result: dict):
+        self.preview = PreviewWindow(result["cv_image"], result["ocr_lines"], result["auto_regions"])
         self.preview.show()
