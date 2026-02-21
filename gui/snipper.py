@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QApplication
-from PyQt6.QtCore import Qt, QRect, QPoint, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QImage, QPixmap
+from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, pyqtSignal
+from PyQt6.QtGui import QPainter, QPainterPath, QColor, QImage, QPixmap
 import platform
 import mss
 import numpy as np
@@ -65,16 +65,20 @@ class SnippingWidget(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.drawPixmap(0, 0, self.original_pixmap)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
 
         if self.is_selecting:
             selection_rect = QRect(self.begin, self.end).normalized()
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-            painter.fillRect(selection_rect, Qt.GlobalColor.transparent)
 
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            overlay = QPainterPath()
+            overlay.addRect(QRectF(self.rect()))
+            hole = QPainterPath()
+            hole.addRect(QRectF(selection_rect))
+            painter.fillPath(overlay.subtracted(hole), QColor(0, 0, 0, 100))
+
             painter.setPen(QColor(255, 0, 0))
             painter.drawRect(selection_rect)
+        else:
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
 
     def mousePressEvent(self, event):
         self.begin = event.pos()
