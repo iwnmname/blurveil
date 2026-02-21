@@ -1,7 +1,9 @@
 from PyQt6.QtWidgets import QWidget, QApplication
 from PyQt6.QtCore import Qt, QRect, QPoint, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor
+from PyQt6.QtGui import QPainter, QColor, QImage, QPixmap
 import platform
+import mss
+import numpy as np
 
 from core.sanitizer import analyze_image
 from gui.preview import PreviewWindow
@@ -14,6 +16,23 @@ def _macos_activate():
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         except Exception:
             pass
+
+
+def _grab_virtual_desktop() -> QPixmap:
+    """Capture the entire virtual desktop (all monitors/spaces) using mss.
+
+    QScreen.grabWindow(0) only captures the primary screen on Windows,
+    and may miss other spaces/monitors on macOS. mss.monitors[0] always
+    returns the bounding box of all monitors combined.
+    """
+    with mss.mss() as sct:
+        monitor = sct.monitors[0]
+        screenshot = sct.grab(monitor)
+    img = np.frombuffer(screenshot.bgra, dtype=np.uint8).reshape(screenshot.height, screenshot.width, 4)
+    img_rgb = np.ascontiguousarray(img[:, :, [2, 1, 0]])  # BGRA → RGB
+    height, width = img_rgb.shape[:2]
+    qimage = QImage(img_rgb.data, width, height, width * 3, QImage.Format.Format_RGB888)
+    return QPixmap.fromImage(qimage.copy())
 
 
 class SnippingWidget(QWidget):
@@ -32,7 +51,7 @@ class SnippingWidget(QWidget):
         virtual_geometry = screen.virtualGeometry()
         self.setGeometry(virtual_geometry)
 
-        self.original_pixmap = screen.grabWindow(0)
+        self.original_pixmap = _grab_virtual_desktop()
 
         self.pixel_ratio = self.original_pixmap.width() / virtual_geometry.width()
         self.original_pixmap.setDevicePixelRatio(self.pixel_ratio)
