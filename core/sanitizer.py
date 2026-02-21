@@ -40,6 +40,23 @@ def apply_blur_regions(cv_img, regions: list[tuple[int, int, int, int]]):
     return result
 
 
+def detect_qr_codes(cv_img) -> list[tuple[int, int, int, int]]:
+    detector = cv2.QRCodeDetector()
+    retval, _decoded, points, _ = detector.detectAndDecodeMulti(cv_img)
+    regions = []
+    if retval and points is not None:
+        pad = 8
+        h_img, w_img = cv_img.shape[:2]
+        for pts in points:
+            pts = pts.astype(int)
+            x_min = max(0, int(pts[:, 0].min()) - pad)
+            y_min = max(0, int(pts[:, 1].min()) - pad)
+            x_max = min(w_img, int(pts[:, 0].max()) + pad)
+            y_max = min(h_img, int(pts[:, 1].max()) + pad)
+            regions.append((x_min, y_min, x_max - x_min, y_max - y_min))
+    return regions
+
+
 def analyze_image(pixmap: QPixmap) -> dict:
     image = qpixmap_to_cv_image(pixmap)
     data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT, config=TESS_CONFIG)
@@ -57,6 +74,8 @@ def analyze_image(pixmap: QPixmap) -> dict:
         ocr_boxes.append({"rect": rect, "text": text})
         if any(re.search(pattern, text) for pattern in PATTERNS.values()):
             auto_regions.append(rect)
+
+    auto_regions.extend(detect_qr_codes(image))
 
     return {
         "cv_image": image,
