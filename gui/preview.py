@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QRect, QPoint, QSize
 from PyQt6.QtGui import QPainter, QColor, QPixmap, QPen, QCursor
 
+from gui.errors import safe_slot
 from core.sanitizer import render_image, save_clean
 
 
@@ -213,14 +214,17 @@ class PreviewWindow(QWidget):
         main_layout.addLayout(buttons_layout)
         self.setLayout(main_layout)
 
-    def copy_to_clipboard(self):
+    @safe_slot("Не удалось скопировать изображение")
+    def copy_to_clipboard(self, *_args):
         QApplication.clipboard().setPixmap(self.canvas.current_pixmap())
         self.close()
 
-    def save_to_file(self):
+    @safe_slot("Не удалось сохранить изображение")
+    def save_to_file(self, *_args):
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Сохранить изображение", "", "PNG Images (*.png);;JPEG Images (*.jpg)"
         )
         if file_path:
-            save_clean(self.canvas.cv_image, self.canvas.blur_regions, file_path)
+            if not save_clean(self.canvas.cv_image, self.canvas.blur_regions, file_path):
+                raise RuntimeError(f"Не удалось записать файл: {file_path}")
             self.close()

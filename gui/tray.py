@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QAction
 from PyQt6.QtCore import Qt
+from gui.errors import safe_slot
 from gui.snipper import SnippingWidget
 from gui.hotkey import HotkeyHandler
 import platform
@@ -47,7 +48,8 @@ class BlurveilTrayApp:
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.show()
 
-    def start_snipping(self):
+    @safe_slot("Не удалось начать выделение области")
+    def start_snipping(self, *_args):
         if self.snipper is not None:
             try:
                 self.snipper.close()
