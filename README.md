@@ -29,14 +29,19 @@ Blurveil встраивается прямо в жест «сделать скр
 
 ---
 
+## Поддерживаемые платформы
+
+Blurveil сейчас поддерживает macOS и Windows.
+
+Linux/Ubuntu не поддерживается: приложение завершится с понятным сообщением при запуске на Linux.
+
+---
+
 ## Установка
 
-**Требования:** Python 3.12+, Tesseract OCR
+**Требования:** macOS или Windows, Python 3.12+, Tesseract OCR
 
 ```bash
-# Установить Tesseract (Ubuntu/Debian)
-sudo apt install tesseract-ocr tesseract-ocr-rus
-
 # Клонировать репозиторий
 git clone https://github.com/iwnmname/blurveil.git
 cd blurveil

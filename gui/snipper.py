@@ -1,12 +1,12 @@
 from PyQt6.QtWidgets import QWidget, QApplication
 from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, pyqtSignal
-from PyQt6.QtGui import QPainter, QPainterPath, QColor, QImage, QPixmap
+from PyQt6.QtGui import QPainter, QPainterPath, QColor
 import platform
-import mss
-import numpy as np
 
 from core.sanitizer import analyze_image
+from gui.errors import safe_slot
 from gui.preview import PreviewWindow
+from platforms.screen_capture import grab_virtual_desktop
 
 
 def _macos_activate():
@@ -16,23 +16,6 @@ def _macos_activate():
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         except Exception:
             pass
-
-
-def _grab_virtual_desktop() -> QPixmap:
-    """Capture the entire virtual desktop (all monitors/spaces) using mss.
-
-    QScreen.grabWindow(0) only captures the primary screen on Windows,
-    and may miss other spaces/monitors on macOS. mss.monitors[0] always
-    returns the bounding box of all monitors combined.
-    """
-    with mss.mss() as sct:
-        monitor = sct.monitors[0]
-        screenshot = sct.grab(monitor)
-    img = np.frombuffer(screenshot.bgra, dtype=np.uint8).reshape(screenshot.height, screenshot.width, 4)
-    img_rgb = np.ascontiguousarray(img[:, :, [2, 1, 0]])  # BGRA → RGB
-    height, width = img_rgb.shape[:2]
-    qimage = QImage(img_rgb.data, width, height, width * 3, QImage.Format.Format_RGB888)
-    return QPixmap.fromImage(qimage.copy())
 
 
 class SnippingWidget(QWidget):
@@ -48,13 +31,15 @@ class SnippingWidget(QWidget):
         self.setCursor(Qt.CursorShape.CrossCursor)
 
         screen = QApplication.primaryScreen()
-        virtual_geometry = screen.virtualGeometry()
-        self.setGeometry(virtual_geometry)
+        self.virtual_geometry = screen.virtualGeometry()
+        self.setGeometry(self.virtual_geometry)
 
-        self.original_pixmap = _grab_virtual_desktop()
+        self.capture = grab_virtual_desktop()
+        self.original_pixmap = self.capture.pixmap
 
-        self.pixel_ratio = self.original_pixmap.width() / virtual_geometry.width()
-        self.original_pixmap.setDevicePixelRatio(self.pixel_ratio)
+        self.pixel_ratio_x = self.capture.width / self.virtual_geometry.width()
+        self.pixel_ratio_y = self.capture.height / self.virtual_geometry.height()
+        self.original_pixmap.setDevicePixelRatio(self.pixel_ratio_x)
 
         self.begin = QPoint()
         self.end = QPoint()
@@ -90,6 +75,7 @@ class SnippingWidget(QWidget):
         self.end = event.pos()
         self.update()
 
+    @safe_slot("Не удалось обработать скриншот")
     def mouseReleaseEvent(self, event):
         self.is_selecting = False
 
@@ -102,18 +88,21 @@ class SnippingWidget(QWidget):
             self.close()
             return
 
-        x = int(rect.x() * self.pixel_ratio)
-        y = int(rect.y() * self.pixel_ratio)
-        w = int(rect.width() * self.pixel_ratio)
-        h = int(rect.height() * self.pixel_ratio)
+        global_x = self.virtual_geometry.x() + rect.x()
+        global_y = self.virtual_geometry.y() + rect.y()
+        x = int(global_x * self.pixel_ratio_x - self.capture.left)
+        y = int(global_y * self.pixel_ratio_y - self.capture.top)
+        w = int(rect.width() * self.pixel_ratio_x)
+        h = int(rect.height() * self.pixel_ratio_y)
 
         cropped = self.original_pixmap.copy(x, y, w, h)
         cropped.setDevicePixelRatio(1.0)
 
-        result = analyze_image(cropped)
-        self.open_preview(result)
-
-        self.close()
+        try:
+            result = analyze_image(cropped)
+            self.open_preview(result)
+        finally:
+            self.close()
 
     def open_preview(self, result: dict):
         self.preview = PreviewWindow(result["cv_image"], result["ocr_boxes"], result["auto_regions"])
