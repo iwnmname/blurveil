@@ -75,6 +75,12 @@ class SnippingWidget(QWidget):
         self.end = event.pos()
         self.update()
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
     @safe_slot("Не удалось обработать скриншот")
     def mouseReleaseEvent(self, event):
         self.is_selecting = False

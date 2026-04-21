@@ -20,6 +20,7 @@ class BlurveilTrayApp:
     def __init__(self, app):
         self.app = app
         self.snipper = None
+        self._snipping_active = False
         self._previews: list = []
 
         self.hotkey_handler = HotkeyHandler("<ctrl>+<shift>+s")
@@ -37,9 +38,9 @@ class BlurveilTrayApp:
         self.tray_icon.setToolTip(f"Blurveil ({self.hotkey_handler.hotkey})")
 
         menu = QMenu()
-        action_snip = QAction("Сделать скриншот", self.app)
-        action_snip.triggered.connect(self.start_snipping)
-        menu.addAction(action_snip)
+        self.action_snip = QAction("Сделать скриншот", self.app)
+        self.action_snip.triggered.connect(self.start_snipping)
+        menu.addAction(self.action_snip)
 
         action_quit = QAction("Выход", self.app)
         action_quit.triggered.connect(self.quit_app)
@@ -50,18 +51,36 @@ class BlurveilTrayApp:
 
     @safe_slot("Не удалось начать выделение области")
     def start_snipping(self, *_args):
-        if self.snipper is not None:
-            try:
-                self.snipper.close()
-            except RuntimeError:
-                pass
-            self.snipper = None
+        if self._snipping_active:
+            self._focus_existing_snipper()
+            return
 
-        _macos_activate()
-        self.snipper = SnippingWidget()
-        self.snipper.preview_ready.connect(self._on_preview_ready)
-        self.snipper.show()
-        self.snipper.activateWindow()
+        self._snipping_active = True
+        self.action_snip.setEnabled(False)
+
+        try:
+            _macos_activate()
+            self.snipper = SnippingWidget()
+            self.snipper.preview_ready.connect(self._on_preview_ready)
+            self.snipper.destroyed.connect(self._on_snipper_destroyed)
+            self.snipper.activateWindow()
+        except Exception:
+            self._on_snipper_destroyed()
+            raise
+
+    def _focus_existing_snipper(self):
+        try:
+            if self.snipper is not None and self.snipper.isVisible():
+                _macos_activate()
+                self.snipper.raise_()
+                self.snipper.activateWindow()
+        except RuntimeError:
+            self._on_snipper_destroyed()
+
+    def _on_snipper_destroyed(self, *_args):
+        self.snipper = None
+        self._snipping_active = False
+        self.action_snip.setEnabled(True)
 
     def _on_preview_ready(self, preview):
         self._previews.append(preview)
