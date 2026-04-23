@@ -1,9 +1,12 @@
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QAction
 from PyQt6.QtCore import Qt
+from core.sanitizer import analyze_image
 from gui.errors import safe_slot
+from gui.preview import PreviewWindow
 from gui.snipper import SnippingWidget
-from gui.hotkey import HotkeyHandler
+from gui.hotkey import HotkeyHandler, DEFAULT_HOTKEY, format_hotkey_for_display
+from platforms.screen_capture import grab_virtual_desktop
 import platform
 
 
@@ -23,7 +26,7 @@ class BlurveilTrayApp:
         self._snipping_active = False
         self._previews: list = []
 
-        self.hotkey_handler = HotkeyHandler("<ctrl>+<shift>+s")
+        self.hotkey_handler = HotkeyHandler(DEFAULT_HOTKEY)
         self.hotkey_handler.activated.connect(self.start_snipping)
         self.hotkey_handler.start()
 
@@ -35,12 +38,16 @@ class BlurveilTrayApp:
             icon = QIcon.fromTheme("edit-cut")
 
         self.tray_icon = QSystemTrayIcon(icon, self.app)
-        self.tray_icon.setToolTip(f"Blurveil ({self.hotkey_handler.hotkey})")
+        self.tray_icon.setToolTip(f"Blurveil ({format_hotkey_for_display(self.hotkey_handler.hotkey)})")
 
         menu = QMenu()
         self.action_snip = QAction("Сделать скриншот", self.app)
         self.action_snip.triggered.connect(self.start_snipping)
         menu.addAction(self.action_snip)
+
+        self.action_fullscreen = QAction("Скрин всего экрана", self.app)
+        self.action_fullscreen.triggered.connect(self.capture_fullscreen)
+        menu.addAction(self.action_fullscreen)
 
         action_quit = QAction("Выход", self.app)
         action_quit.triggered.connect(self.quit_app)
@@ -56,7 +63,7 @@ class BlurveilTrayApp:
             return
 
         self._snipping_active = True
-        self.action_snip.setEnabled(False)
+        self._set_capture_actions_enabled(False)
 
         try:
             _macos_activate()
@@ -80,11 +87,37 @@ class BlurveilTrayApp:
     def _on_snipper_destroyed(self, *_args):
         self.snipper = None
         self._snipping_active = False
-        self.action_snip.setEnabled(True)
+        self._set_capture_actions_enabled(True)
+
+    @safe_slot("Не удалось сделать скрин всего экрана")
+    def capture_fullscreen(self, *_args):
+        if self._snipping_active:
+            self._focus_existing_snipper()
+            return
+
+        self._set_capture_actions_enabled(False)
+        try:
+            capture = grab_virtual_desktop()
+            result = analyze_image(capture.pixmap)
+            self._open_preview(result)
+        finally:
+            self._set_capture_actions_enabled(True)
 
     def _on_preview_ready(self, preview):
         self._previews.append(preview)
         preview.destroyed.connect(lambda: self._previews.remove(preview) if preview in self._previews else None)
+
+    def _open_preview(self, result: dict):
+        preview = PreviewWindow(result["cv_image"], result["ocr_boxes"], result["auto_regions"])
+        _macos_activate()
+        preview.show()
+        preview.activateWindow()
+        preview.raise_()
+        self._on_preview_ready(preview)
+
+    def _set_capture_actions_enabled(self, enabled: bool):
+        self.action_snip.setEnabled(enabled)
+        self.action_fullscreen.setEnabled(enabled)
 
     def quit_app(self):
         self.hotkey_handler.stop()
