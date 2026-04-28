@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QAction
 from PyQt6.QtCore import Qt
 from core.sanitizer import analyze_image
@@ -59,8 +59,7 @@ class BlurveilTrayApp:
     @safe_slot("Не удалось начать выделение области")
     def start_snipping(self, *_args):
         if self._snipping_active:
-            self._focus_existing_snipper()
-            return
+            self._close_existing_snipper()
 
         self._snipping_active = True
         self._set_capture_actions_enabled(False)
@@ -69,22 +68,28 @@ class BlurveilTrayApp:
             _macos_activate()
             self.snipper = SnippingWidget()
             self.snipper.preview_ready.connect(self._on_preview_ready)
-            self.snipper.destroyed.connect(self._on_snipper_destroyed)
+            self.snipper.destroyed.connect(
+                lambda *_args, snipper=self.snipper: self._on_snipper_destroyed(snipper)
+            )
             self.snipper.activateWindow()
         except Exception:
             self._on_snipper_destroyed()
             raise
 
-    def _focus_existing_snipper(self):
+    def _close_existing_snipper(self):
         try:
-            if self.snipper is not None and self.snipper.isVisible():
-                _macos_activate()
-                self.snipper.raise_()
-                self.snipper.activateWindow()
+            if self.snipper is not None:
+                snipper = self.snipper
+                self.snipper.close()
+                QApplication.processEvents()
+                if self.snipper is snipper:
+                    self._on_snipper_destroyed(snipper)
         except RuntimeError:
-            self._on_snipper_destroyed()
+            pass
 
-    def _on_snipper_destroyed(self, *_args):
+    def _on_snipper_destroyed(self, snipper=None):
+        if snipper is not None and snipper is not self.snipper:
+            return
         self.snipper = None
         self._snipping_active = False
         self._set_capture_actions_enabled(True)
@@ -92,8 +97,7 @@ class BlurveilTrayApp:
     @safe_slot("Не удалось сделать скрин всего экрана")
     def capture_fullscreen(self, *_args):
         if self._snipping_active:
-            self._focus_existing_snipper()
-            return
+            self._close_existing_snipper()
 
         self._set_capture_actions_enabled(False)
         try:
