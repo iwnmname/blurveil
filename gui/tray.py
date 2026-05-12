@@ -1,8 +1,9 @@
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QAction
-from PyQt6.QtCore import Qt
-from core.sanitizer import analyze_image
-from gui.errors import safe_slot
+from PyQt6.QtCore import Qt, QThread, QTimer
+from gui.analysis import ImageAnalysisWorker, ProcessingDialog
+from gui.errors import safe_slot, show_exception
+from gui.permissions import MacOSPermissionsDialog, should_show_macos_permissions_preflight
 from gui.preview import PreviewWindow
 from gui.snipper import SnippingWidget
 from gui.hotkey import HotkeyHandler, DEFAULT_HOTKEY, format_hotkey_for_display
@@ -24,11 +25,20 @@ class BlurveilTrayApp:
         self.app = app
         self.snipper = None
         self._snipping_active = False
+        self._analysis_active = False
+        self._analysis_thread = None
+        self._analysis_worker = None
+        self._processing_dialog = None
+        self._permissions_dialog = None
         self._previews: list = []
+        self._hotkey_start_error = None
 
         self.hotkey_handler = HotkeyHandler(DEFAULT_HOTKEY)
         self.hotkey_handler.activated.connect(self.start_snipping)
-        self.hotkey_handler.start()
+        try:
+            self.hotkey_handler.start()
+        except Exception as exc:
+            self._hotkey_start_error = exc
 
         if not QIcon.hasThemeIcon("edit-cut"):
             pixmap = QPixmap(16, 16)
@@ -49,6 +59,11 @@ class BlurveilTrayApp:
         self.action_fullscreen.triggered.connect(self.capture_fullscreen)
         menu.addAction(self.action_fullscreen)
 
+        if platform.system() == "Darwin":
+            action_permissions = QAction("Проверить разрешения macOS", self.app)
+            action_permissions.triggered.connect(lambda: self._show_permissions_dialog(force=True))
+            menu.addAction(action_permissions)
+
         action_quit = QAction("Выход", self.app)
         action_quit.triggered.connect(self.quit_app)
         menu.addAction(action_quit)
@@ -56,8 +71,17 @@ class BlurveilTrayApp:
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.show()
 
+        if platform.system() == "Darwin":
+            QTimer.singleShot(0, self._show_permissions_preflight)
+        if self._hotkey_start_error is not None:
+            QTimer.singleShot(0, self._show_hotkey_start_error)
+
     @safe_slot("Не удалось начать выделение области")
     def start_snipping(self, *_args):
+        if self._analysis_active:
+            self._focus_processing_dialog()
+            return
+
         if self._snipping_active:
             self._focus_existing_snipper()
             return
@@ -68,7 +92,7 @@ class BlurveilTrayApp:
         try:
             _macos_activate()
             self.snipper = SnippingWidget()
-            self.snipper.preview_ready.connect(self._on_preview_ready)
+            self.snipper.capture_ready.connect(self._start_analysis)
             self.snipper.destroyed.connect(self._on_snipper_destroyed)
             self.snipper.activateWindow()
         except Exception:
@@ -87,10 +111,15 @@ class BlurveilTrayApp:
     def _on_snipper_destroyed(self, *_args):
         self.snipper = None
         self._snipping_active = False
-        self._set_capture_actions_enabled(True)
+        if not self._analysis_active:
+            self._set_capture_actions_enabled(True)
 
     @safe_slot("Не удалось сделать скрин всего экрана")
     def capture_fullscreen(self, *_args):
+        if self._analysis_active:
+            self._focus_processing_dialog()
+            return
+
         if self._snipping_active:
             self._focus_existing_snipper()
             return
@@ -98,9 +127,74 @@ class BlurveilTrayApp:
         self._set_capture_actions_enabled(False)
         try:
             capture = grab_virtual_desktop()
-            result = analyze_image(capture.pixmap)
-            self._open_preview(result)
-        finally:
+            self._start_analysis(capture.pixmap)
+        except Exception:
+            self._set_capture_actions_enabled(True)
+            raise
+
+    def _start_analysis(self, pixmap):
+        if self._analysis_active:
+            self._focus_processing_dialog()
+            return
+
+        self._analysis_active = True
+        self._set_capture_actions_enabled(False)
+        self._show_processing_dialog()
+
+        try:
+            image = pixmap.toImage().copy()
+            thread = QThread(self.app)
+            worker = ImageAnalysisWorker(image)
+            worker.moveToThread(thread)
+
+            self._analysis_thread = thread
+            self._analysis_worker = worker
+
+            thread.started.connect(worker.run)
+            worker.finished.connect(self._on_analysis_finished)
+            worker.failed.connect(self._on_analysis_failed)
+            worker.finished.connect(thread.quit)
+            worker.failed.connect(thread.quit)
+            thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+            thread.finished.connect(self._cleanup_analysis)
+            thread.start()
+        except Exception:
+            self._cleanup_analysis()
+            raise
+
+    def _show_processing_dialog(self):
+        self._processing_dialog = ProcessingDialog()
+        self._processing_dialog.show()
+        self._processing_dialog.activateWindow()
+        self._processing_dialog.raise_()
+
+    def _focus_processing_dialog(self):
+        if self._processing_dialog is None:
+            return
+        self._processing_dialog.show()
+        self._processing_dialog.activateWindow()
+        self._processing_dialog.raise_()
+
+    def _close_processing_dialog(self):
+        if self._processing_dialog is not None:
+            self._processing_dialog.close()
+            self._processing_dialog = None
+
+    def _on_analysis_finished(self, result: dict):
+        self._close_processing_dialog()
+        self._open_preview(result)
+
+    def _on_analysis_failed(self, exc: Exception):
+        self._close_processing_dialog()
+        show_exception("Не удалось обработать скриншот", exc, tray_icon=self.tray_icon)
+
+    def _cleanup_analysis(self):
+        self._close_processing_dialog()
+        self._analysis_thread = None
+        self._analysis_worker = None
+        self._analysis_active = False
+        if not self._snipping_active:
             self._set_capture_actions_enabled(True)
 
     def _on_preview_ready(self, preview):
@@ -118,6 +212,33 @@ class BlurveilTrayApp:
     def _set_capture_actions_enabled(self, enabled: bool):
         self.action_snip.setEnabled(enabled)
         self.action_fullscreen.setEnabled(enabled)
+
+    def _show_permissions_preflight(self):
+        self._show_permissions_dialog(force=False)
+
+    def _show_permissions_dialog(self, force: bool):
+        if platform.system() != "Darwin":
+            return
+        if not force and not should_show_macos_permissions_preflight():
+            return
+        if self._permissions_dialog is not None and self._permissions_dialog.isVisible():
+            self._permissions_dialog.activateWindow()
+            self._permissions_dialog.raise_()
+            return
+
+        self._permissions_dialog = MacOSPermissionsDialog()
+        self._permissions_dialog.finished.connect(lambda: setattr(self, "_permissions_dialog", None))
+        self._permissions_dialog.show()
+        self._permissions_dialog.activateWindow()
+        self._permissions_dialog.raise_()
+
+    def _show_hotkey_start_error(self):
+        show_exception(
+            "Не удалось запустить глобальную горячую клавишу",
+            self._hotkey_start_error,
+            tray_icon=self.tray_icon,
+        )
+        self._show_permissions_dialog(force=True)
 
     def quit_app(self):
         self.hotkey_handler.stop()
