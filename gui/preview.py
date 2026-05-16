@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QApplication, QFileDialog, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QApplication, QFileDialog, QSizePolicy, QButtonGroup
 )
-from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, QSize
+from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, QSize, pyqtSignal
 from PyQt6.QtGui import QPainter, QPainterPath, QColor, QPixmap, QPen, QCursor
 
 import cv2
@@ -10,10 +10,13 @@ from core.sanitizer import apply_blur_regions, cv_image_to_qpixmap, render_image
 
 
 class ImageCanvas(QWidget):
+    history_changed = pyqtSignal(bool, bool)
+
     def __init__(self, cv_image, ocr_boxes: list, auto_regions: list[tuple]):
         super().__init__()
         self.cv_image = cv_image
         self.ocr_boxes = ocr_boxes
+        self._mode = "blur"
         # Each region: {'rect': (x,y,w,h), 'active': bool, 'auto': bool}
         self._regions: list[dict] = [{'rect': r, 'active': True, 'auto': True} for r in auto_regions]
         self._hovered_region_idx: int | None = None
@@ -24,6 +27,11 @@ class ImageCanvas(QWidget):
         self._crop_rect: tuple[int, int, int, int] = (0, 0, cv_image.shape[1], cv_image.shape[0])
         self._crop_drag_handle: str | None = None
         self._crop_drag_offset: QPoint | None = None
+        self._crop_drag_history_saved = False
+        self._blur_undo_stack: list[list[dict]] = []
+        self._blur_redo_stack: list[list[dict]] = []
+        self._crop_undo_stack: list[tuple[int, int, int, int]] = []
+        self._crop_redo_stack: list[tuple[int, int, int, int]] = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self._rendered_pixmap: QPixmap | None = None
@@ -32,6 +40,91 @@ class ImageCanvas(QWidget):
     def _rerender(self):
         self._rendered_pixmap = render_image(self.cv_image, self.blur_regions)
         self.update()
+
+    def set_mode(self, mode: str):
+        if mode not in {"blur", "crop"} or mode == self._mode:
+            return
+        self._mode = mode
+        self._drag_start = None
+        self._drag_current = None
+        self._is_dragging = False
+        self._crop_drag_handle = None
+        self._crop_drag_offset = None
+        self._crop_drag_history_saved = False
+        self._hovered_region_idx = None
+        self._hovered_ocr_idx = None
+        self.setCursor(QCursor(Qt.CursorShape.CrossCursor if mode == "blur" else Qt.CursorShape.ArrowCursor))
+        self.update()
+        self._emit_history_changed()
+
+    def _regions_state(self) -> list[dict]:
+        return [
+            {"rect": tuple(region["rect"]), "active": bool(region["active"]), "auto": bool(region["auto"])}
+            for region in self._regions
+        ]
+
+    def _restore_regions_state(self, regions: list[dict]):
+        self._regions = [
+            {"rect": tuple(region["rect"]), "active": bool(region["active"]), "auto": bool(region["auto"])}
+            for region in regions
+        ]
+        self._clear_interaction_state()
+        self._rerender()
+        self._emit_history_changed()
+
+    def _restore_crop_state(self, crop_rect: tuple[int, int, int, int]):
+        self._crop_rect = crop_rect
+        self._clear_interaction_state()
+        self.update()
+        self._emit_history_changed()
+
+    def _clear_interaction_state(self):
+        self._drag_start = None
+        self._drag_current = None
+        self._is_dragging = False
+        self._crop_drag_handle = None
+        self._crop_drag_offset = None
+        self._crop_drag_history_saved = False
+
+    def _push_blur_history(self):
+        self._blur_undo_stack.append(self._regions_state())
+        self._blur_redo_stack.clear()
+        self._emit_history_changed()
+
+    def _push_crop_history(self):
+        self._crop_undo_stack.append(self._crop_rect)
+        self._crop_redo_stack.clear()
+        self._emit_history_changed()
+
+    def _emit_history_changed(self):
+        if self._mode == "crop":
+            self.history_changed.emit(bool(self._crop_undo_stack), bool(self._crop_redo_stack))
+        else:
+            self.history_changed.emit(bool(self._blur_undo_stack), bool(self._blur_redo_stack))
+
+    def undo(self):
+        if self._mode == "crop":
+            if not self._crop_undo_stack:
+                return
+            self._crop_redo_stack.append(self._crop_rect)
+            self._restore_crop_state(self._crop_undo_stack.pop())
+        else:
+            if not self._blur_undo_stack:
+                return
+            self._blur_redo_stack.append(self._regions_state())
+            self._restore_regions_state(self._blur_undo_stack.pop())
+
+    def redo(self):
+        if self._mode == "crop":
+            if not self._crop_redo_stack:
+                return
+            self._crop_undo_stack.append(self._crop_rect)
+            self._restore_crop_state(self._crop_redo_stack.pop())
+        else:
+            if not self._blur_redo_stack:
+                return
+            self._blur_undo_stack.append(self._regions_state())
+            self._restore_regions_state(self._blur_redo_stack.pop())
 
     @property
     def blur_regions(self) -> list[tuple]:
@@ -125,6 +218,10 @@ class ImageCanvas(QWidget):
         return cursors.get(handle)
 
     def _update_crop_rect(self, handle: str, pos: QPoint):
+        if not self._crop_drag_history_saved:
+            self._push_crop_history()
+            self._crop_drag_history_saved = True
+
         img_pos = self._clamped_img_pos(pos)
         img_w, img_h = self.cv_image.shape[1], self.cv_image.shape[0]
         min_size = 10
@@ -154,6 +251,9 @@ class ImageCanvas(QWidget):
         self.update()
 
     def reset_crop(self):
+        if self._is_full_crop():
+            return
+        self._push_crop_history()
         self._crop_rect = (0, 0, self.cv_image.shape[1], self.cv_image.shape[0])
         self.update()
 
@@ -162,21 +262,24 @@ class ImageCanvas(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            allow_move = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-            crop_handle = self._crop_handle_at(event.pos(), allow_move=allow_move)
-            if crop_handle is not None:
-                self._crop_drag_handle = crop_handle
-                img_pos = self._clamped_img_pos(event.pos())
-                x, y, _w, _h = self._crop_rect
-                self._crop_drag_offset = QPoint(img_pos.x() - x, img_pos.y() - y)
-                self.setCursor(QCursor(self._crop_cursor(crop_handle)))
+            if self._mode == "crop":
+                crop_handle = self._crop_handle_at(event.pos(), allow_move=True)
+                if crop_handle is not None:
+                    self._crop_drag_handle = crop_handle
+                    self._crop_drag_history_saved = False
+                    img_pos = self._clamped_img_pos(event.pos())
+                    x, y, _w, _h = self._crop_rect
+                    self._crop_drag_offset = QPoint(img_pos.x() - x, img_pos.y() - y)
+                    self.setCursor(QCursor(self._crop_cursor(crop_handle)))
                 return
+
             self._drag_start = event.pos()
             self._drag_current = event.pos()
             self._is_dragging = False
-        elif event.button() == Qt.MouseButton.RightButton:
+        elif event.button() == Qt.MouseButton.RightButton and self._mode == "blur":
             region_idx = self._region_at(event.pos())
             if region_idx is not None:
+                self._push_blur_history()
                 self._regions.pop(region_idx)
                 self._hovered_region_idx = None
                 self._rerender()
@@ -200,20 +303,23 @@ class ImageCanvas(QWidget):
         prev_region = self._hovered_region_idx
         prev_ocr = self._hovered_ocr_idx
 
-        allow_move = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        crop_handle = self._crop_handle_at(pos, allow_move=allow_move)
-        self._hovered_region_idx = None if crop_handle is not None else self._region_at(pos)
-        if crop_handle is not None:
+        if self._mode == "crop":
+            crop_handle = self._crop_handle_at(pos, allow_move=True)
+            self._hovered_region_idx = None
             self._hovered_ocr_idx = None
-        elif self._hovered_region_idx is not None:
+            crop_cursor = self._crop_cursor(crop_handle)
+            self.setCursor(QCursor(crop_cursor if crop_cursor is not None else Qt.CursorShape.ArrowCursor))
+            if prev_region is not None or prev_ocr is not None:
+                self.update()
+            return
+
+        self._hovered_region_idx = self._region_at(pos)
+        if self._hovered_region_idx is not None:
             self._hovered_ocr_idx = None
         else:
             self._hovered_ocr_idx = self._ocr_box_at(pos)
 
-        crop_cursor = self._crop_cursor(crop_handle)
-        if crop_cursor is not None:
-            self.setCursor(QCursor(crop_cursor))
-        elif self._hovered_region_idx is not None or self._hovered_ocr_idx is not None:
+        if self._hovered_region_idx is not None or self._hovered_ocr_idx is not None:
             self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
@@ -228,7 +334,10 @@ class ImageCanvas(QWidget):
         if self._crop_drag_handle is not None:
             self._crop_drag_handle = None
             self._crop_drag_offset = None
-            self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+            self._crop_drag_history_saved = False
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        elif self._mode == "crop":
+            pass
         elif self._is_dragging and self._drag_start and self._drag_current:
             widget_rect = QRect(self._drag_start, self._drag_current).normalized()
             if widget_rect.width() > 5 and widget_rect.height() > 5:
@@ -240,17 +349,20 @@ class ImageCanvas(QWidget):
                 w = min(img_w - x, p2.x() - p1.x())
                 h = min(img_h - y, p2.y() - p1.y())
                 if w > 0 and h > 0:
+                    self._push_blur_history()
                     self._regions.append({'rect': (x, y, w, h), 'active': True, 'auto': False})
                     self._rerender()
         else:
             pos = event.pos()
             region_idx = self._region_at(pos)
             if region_idx is not None:
+                self._push_blur_history()
                 self._regions[region_idx]['active'] = not self._regions[region_idx]['active']
                 self._rerender()
             else:
                 ocr_idx = self._ocr_box_at(pos)
                 if ocr_idx is not None:
+                    self._push_blur_history()
                     self._regions.append({'rect': tuple(self.ocr_boxes[ocr_idx]["rect"]), 'active': True, 'auto': False})
                     self._rerender()
 
@@ -262,7 +374,8 @@ class ImageCanvas(QWidget):
         self._hovered_region_idx = None
         self._hovered_ocr_idx = None
         if self._crop_drag_handle is None:
-            self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+            cursor = Qt.CursorShape.CrossCursor if self._mode == "blur" else Qt.CursorShape.ArrowCursor
+            self.setCursor(QCursor(cursor))
         self.update()
 
     def paintEvent(self, event):
@@ -288,19 +401,23 @@ class ImageCanvas(QWidget):
                 painter.setBrush(QColor(160, 160, 160, 25))
             painter.drawRect(wr)
 
-        if self._hovered_ocr_idx is not None:
+        if self._mode == "blur" and self._hovered_ocr_idx is not None:
             wr = self._img_to_widget(self.ocr_boxes[self._hovered_ocr_idx]["rect"])
             painter.setPen(QPen(QColor(80, 160, 255, 220), 2, Qt.PenStyle.SolidLine))
             painter.setBrush(QColor(80, 160, 255, 30))
             painter.drawRect(wr)
 
-        if self._is_dragging and self._drag_start and self._drag_current:
+        if self._mode == "blur" and self._is_dragging and self._drag_start and self._drag_current:
             drag_rect = QRect(self._drag_start, self._drag_current).normalized()
             painter.setPen(QPen(QColor(255, 80, 80, 220), 2, Qt.PenStyle.SolidLine))
             painter.setBrush(QColor(255, 80, 80, 40))
             painter.drawRect(drag_rect)
 
-        self._paint_crop_overlay(painter, QRect(int(ox), int(oy), pw, ph))
+        image_rect = QRect(int(ox), int(oy), pw, ph)
+        if self._mode == "crop":
+            self._paint_crop_overlay(painter, image_rect)
+        elif not self._is_full_crop():
+            self._paint_crop_outline(painter)
 
         painter.end()
 
@@ -321,6 +438,12 @@ class ImageCanvas(QWidget):
         painter.setBrush(QColor(255, 255, 255, 235))
         for point in self._crop_handle_points(crop_wr):
             painter.drawRect(QRect(point.x() - 4, point.y() - 4, 8, 8))
+
+    def _paint_crop_outline(self, painter: QPainter):
+        crop_wr = self._img_to_widget(self._crop_rect)
+        painter.setPen(QPen(QColor(255, 255, 255, 210), 2, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(crop_wr)
 
     def _crop_handle_points(self, rect: QRect) -> list[QPoint]:
         cx = rect.center().x()
@@ -366,8 +489,40 @@ class PreviewWindow(QWidget):
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(8)
+
+        mode_layout = QHBoxLayout()
+
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+
+        self.btn_blur_mode = QPushButton("Блюр")
+        self.btn_blur_mode.setCheckable(True)
+        self.btn_blur_mode.setChecked(True)
+        self.btn_blur_mode.clicked.connect(lambda: self.canvas.set_mode("blur"))
+        self.mode_group.addButton(self.btn_blur_mode)
+        mode_layout.addWidget(self.btn_blur_mode)
+
+        self.btn_crop_mode = QPushButton("Кроп")
+        self.btn_crop_mode.setCheckable(True)
+        self.btn_crop_mode.clicked.connect(lambda: self.canvas.set_mode("crop"))
+        self.mode_group.addButton(self.btn_crop_mode)
+        mode_layout.addWidget(self.btn_crop_mode)
+        mode_layout.addStretch(1)
+        main_layout.addLayout(mode_layout)
         main_layout.addWidget(self.canvas)
+
         buttons_layout = QHBoxLayout()
+
+        self.btn_undo = QPushButton("Отменить")
+        self.btn_undo.setEnabled(False)
+        self.btn_undo.clicked.connect(self.canvas.undo)
+        buttons_layout.addWidget(self.btn_undo)
+
+        self.btn_redo = QPushButton("Повторить")
+        self.btn_redo.setEnabled(False)
+        self.btn_redo.clicked.connect(self.canvas.redo)
+        buttons_layout.addWidget(self.btn_redo)
+
         btn_copy = QPushButton("Скопировать в буфер")
         btn_copy.clicked.connect(self.copy_to_clipboard)
         buttons_layout.addWidget(btn_copy)
@@ -379,6 +534,11 @@ class PreviewWindow(QWidget):
         buttons_layout.addWidget(btn_reset_crop)
         main_layout.addLayout(buttons_layout)
         self.setLayout(main_layout)
+        self.canvas.history_changed.connect(self._update_history_buttons)
+
+    def _update_history_buttons(self, can_undo: bool, can_redo: bool):
+        self.btn_undo.setEnabled(can_undo)
+        self.btn_redo.setEnabled(can_redo)
 
     @safe_slot("Не удалось скопировать изображение")
     def copy_to_clipboard(self, *_args):
