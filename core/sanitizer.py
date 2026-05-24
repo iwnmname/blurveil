@@ -1,12 +1,50 @@
 import cv2
 import numpy as np
+import os
 import pytesseract
 import re
+import sys
+from pathlib import Path
 from PyQt6.QtGui import QImage, QPixmap
 
 TESS_CONFIG = r'--oem 3 --psm 11'
 OCR_MIN_CONFIDENCE = 20
 BOX_PAD = 4
+
+
+def _runtime_paths() -> list[Path]:
+    paths = []
+    if getattr(sys, "frozen", False):
+        bundle_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        paths.extend([
+            bundle_dir,
+            bundle_dir / "bin",
+            bundle_dir.parent / "Resources",
+            Path(sys.executable).parent,
+        ])
+    return paths
+
+
+def _configure_bundled_tesseract():
+    executable_names = ["tesseract.exe"] if sys.platform.startswith("win") else ["tesseract"]
+    for base_path in _runtime_paths():
+        for executable_name in executable_names:
+            candidate = base_path / executable_name
+            if candidate.exists():
+                pytesseract.pytesseract.tesseract_cmd = str(candidate)
+                break
+        else:
+            continue
+        break
+
+    for base_path in _runtime_paths():
+        tessdata_path = base_path / "tessdata"
+        if tessdata_path.exists():
+            os.environ.setdefault("TESSDATA_PREFIX", str(tessdata_path))
+            break
+
+
+_configure_bundled_tesseract()
 
 DIRECT_PATTERNS = {
     "Email": re.compile(r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b'),
