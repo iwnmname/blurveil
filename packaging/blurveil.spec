@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
 block_cipher = None
@@ -91,6 +91,7 @@ tessdata_dir = _find_tessdata_dir(tesseract_cmd)
 datas = []
 if tessdata_dir:
     datas.append((str(tessdata_dir), "tessdata"))
+datas.extend(collect_data_files("cv2", includes=["data/haarcascade_*.xml"]))
 
 binaries = _tesseract_binaries(tesseract_cmd)
 
