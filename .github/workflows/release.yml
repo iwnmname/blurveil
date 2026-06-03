@@ -104,6 +104,7 @@ jobs:
           $env:APP_VERSION = $version
           $env:APP_SOURCE_DIR = (Resolve-Path "dist\Blurveil").Path
           $env:APP_OUTPUT_DIR = (Resolve-Path "dist\installers").Path
+          $env:APP_ICON_FILE = (Resolve-Path "assets\icons\blurveil.ico").Path
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\windows\blurveil.iss
           Compress-Archive -Path dist\Blurveil\* -DestinationPath "dist\installers\Blurveil-$version-Windows-portable.zip" -Force
 

@@ -19,6 +19,9 @@ def _find_project_root() -> Path:
 
 
 project_root = _find_project_root()
+icons_dir = project_root / "assets" / "icons"
+windows_icon = icons_dir / "blurveil.ico"
+macos_icon = icons_dir / "blurveil.icns"
 
 
 def _path_from_env(name: str) -> Path | None:
@@ -91,6 +94,8 @@ tessdata_dir = _find_tessdata_dir(tesseract_cmd)
 datas = []
 if tessdata_dir:
     datas.append((str(tessdata_dir), "tessdata"))
+if icons_dir.exists():
+    datas.append((str(icons_dir), "assets/icons"))
 datas.extend(collect_data_files("cv2", includes=["data/haarcascade_*.xml"]))
 
 binaries = _tesseract_binaries(tesseract_cmd)
@@ -122,6 +127,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="Blurveil",
+    icon=str(windows_icon) if windows_icon.exists() else None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -149,6 +155,6 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name="Blurveil.app",
-        icon=None,
+        icon=str(macos_icon) if macos_icon.exists() else None,
         bundle_identifier="com.blurveil.app",
     )
