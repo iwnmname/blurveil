@@ -26,6 +26,7 @@ ehthumbs.db
 
 !icon.png
 !assets/
+!assets/**
 
 # --- Build Artifacts (PyInstaller) ---
 build/
