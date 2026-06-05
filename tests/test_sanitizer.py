@@ -7,6 +7,7 @@ import os
 import numpy as np
 from PyQt6.QtGui import QColor, QImage
 
+from core import detectors
 from core import sanitizer
 
 
@@ -112,11 +113,66 @@ class ImageConversionTests(unittest.TestCase):
         image = np.zeros((100, 220, 3), dtype=np.uint8)
 
         with patch.object(sanitizer.pytesseract, "image_to_data", return_value=fake_ocr):
-            with patch.object(sanitizer, "detect_qr_codes", return_value=[]):
+            with patch.object(sanitizer, "detect_object_regions", return_value=[]):
                 result = sanitizer.analyze_cv_image(image)
 
         self.assertEqual(["password:", "secret-value"], [box["text"] for box in result["ocr_boxes"]])
         self.assertIn((6, 16, 168, 18), result["auto_regions"])
+
+    def test_analyze_cv_image_adds_object_detector_regions(self):
+        fake_ocr = {
+            "text": [],
+            "conf": [],
+            "left": [],
+            "top": [],
+            "width": [],
+            "height": [],
+        }
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        with patch.object(sanitizer.pytesseract, "image_to_data", return_value=fake_ocr):
+            with patch.object(sanitizer, "detect_object_regions", return_value=[(10, 20, 30, 40)]):
+                result = sanitizer.analyze_cv_image(image)
+
+        self.assertEqual([(10, 20, 30, 40)], result["auto_regions"])
+
+
+class ObjectDetectorTests(unittest.TestCase):
+    def test_detect_object_regions_uses_supplied_detectors(self):
+        class FakeDetector:
+            name = "fake"
+
+            def detect(self, _image):
+                return [detectors.Detection(rect=(1, 2, 3, 4), kind=self.name)]
+
+        image = np.zeros((20, 20, 3), dtype=np.uint8)
+
+        self.assertEqual([(1, 2, 3, 4)], sanitizer.detect_object_regions(image, detectors=(FakeDetector(),)))
+
+    def test_face_detector_pads_and_clamps_regions(self):
+        class FakeCascade:
+            def empty(self):
+                return False
+
+            def detectMultiScale(self, *_args, **_kwargs):
+                return np.array([[0, 2, 20, 30]])
+
+        with TemporaryDirectory() as tmpdir:
+            cascade_path = Path(tmpdir) / "face.xml"
+            cascade_path.write_text("", encoding="utf-8")
+            detector = detectors.FaceDetector(cascade_path=cascade_path)
+            image = np.zeros((40, 50, 3), dtype=np.uint8)
+
+            with patch.object(detectors.cv2, "CascadeClassifier", return_value=FakeCascade()):
+                result = detector.detect(image)
+
+        self.assertEqual([detectors.Detection(rect=(0, 0, 24, 37), kind="face", label="Face")], result)
+
+    def test_face_detector_returns_empty_when_cascade_is_missing(self):
+        detector = detectors.FaceDetector(cascade_path=Path("missing-face-model.xml"))
+        image = np.zeros((40, 50, 3), dtype=np.uint8)
+
+        self.assertEqual([], detector.detect(image))
 
 
 class RuntimeTesseractTests(unittest.TestCase):

@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from PyQt6.QtGui import QImage, QPixmap
 
+from core.detectors import DEFAULT_OBJECT_DETECTORS, FaceDetector, QRCodeDetector, detect_objects
+
 TESS_CONFIG = r'--oem 3 --psm 11'
 OCR_MIN_CONFIDENCE = 20
 BOX_PAD = 4
@@ -111,20 +113,15 @@ def apply_blur_regions(cv_img, regions: list[tuple[int, int, int, int]]):
 
 
 def detect_qr_codes(cv_img) -> list[tuple[int, int, int, int]]:
-    detector = cv2.QRCodeDetector()
-    retval, _decoded, points, _ = detector.detectAndDecodeMulti(cv_img)
-    regions = []
-    if retval and points is not None:
-        pad = 8
-        h_img, w_img = cv_img.shape[:2]
-        for pts in points:
-            pts = pts.astype(int)
-            x_min = max(0, int(pts[:, 0].min()) - pad)
-            y_min = max(0, int(pts[:, 1].min()) - pad)
-            x_max = min(w_img, int(pts[:, 0].max()) + pad)
-            y_max = min(h_img, int(pts[:, 1].max()) + pad)
-            regions.append((x_min, y_min, x_max - x_min, y_max - y_min))
-    return regions
+    return [detection.rect for detection in QRCodeDetector().detect(cv_img)]
+
+
+def detect_faces(cv_img) -> list[tuple[int, int, int, int]]:
+    return [detection.rect for detection in FaceDetector().detect(cv_img)]
+
+
+def detect_object_regions(cv_img, detectors=DEFAULT_OBJECT_DETECTORS) -> list[tuple[int, int, int, int]]:
+    return [detection.rect for detection in detect_objects(cv_img, detectors)]
 
 
 def _confidence(value) -> float:
@@ -269,7 +266,7 @@ def analyze_cv_image(image) -> dict:
         if region is not None:
             auto_regions.append(region)
 
-    auto_regions.extend(detect_qr_codes(image))
+    auto_regions.extend(detect_object_regions(image))
 
     return {
         "cv_image": image,
