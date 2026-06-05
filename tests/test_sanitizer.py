@@ -1,5 +1,8 @@
 import unittest
 from unittest.mock import patch
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import os
 
 import numpy as np
 from PyQt6.QtGui import QColor, QImage
@@ -114,6 +117,34 @@ class ImageConversionTests(unittest.TestCase):
 
         self.assertEqual(["password:", "secret-value"], [box["text"] for box in result["ocr_boxes"]])
         self.assertIn((6, 16, 168, 18), result["auto_regions"])
+
+
+class RuntimeTesseractTests(unittest.TestCase):
+    def test_configures_bundled_tesseract_when_frozen(self):
+        original_cmd = sanitizer.pytesseract.pytesseract.tesseract_cmd
+        original_tessdata = os.environ.get("TESSDATA_PREFIX")
+
+        try:
+            with TemporaryDirectory() as tmpdir:
+                bundle_dir = Path(tmpdir)
+                tesseract_path = bundle_dir / "tesseract"
+                tessdata_path = bundle_dir / "tessdata"
+                tesseract_path.write_text("", encoding="utf-8")
+                tessdata_path.mkdir()
+
+                with patch.object(sanitizer.sys, "frozen", True, create=True):
+                    with patch.object(sanitizer.sys, "_MEIPASS", str(bundle_dir), create=True):
+                        with patch.object(sanitizer.sys, "platform", "darwin"):
+                            sanitizer._configure_bundled_tesseract()
+
+                self.assertEqual(str(tesseract_path), sanitizer.pytesseract.pytesseract.tesseract_cmd)
+                self.assertEqual(str(tessdata_path), os.environ.get("TESSDATA_PREFIX"))
+        finally:
+            sanitizer.pytesseract.pytesseract.tesseract_cmd = original_cmd
+            if original_tessdata is None:
+                os.environ.pop("TESSDATA_PREFIX", None)
+            else:
+                os.environ["TESSDATA_PREFIX"] = original_tessdata
 
 
 if __name__ == "__main__":
