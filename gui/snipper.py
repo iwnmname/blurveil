@@ -1,25 +1,13 @@
 from PyQt6.QtWidgets import QWidget, QApplication
 from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, pyqtSignal
 from PyQt6.QtGui import QPainter, QPainterPath, QColor
-import platform
 
-from core.sanitizer import analyze_image
 from gui.errors import safe_slot
-from gui.preview import PreviewWindow
 from platforms.screen_capture import grab_virtual_desktop
 
 
-def _macos_activate():
-    if platform.system() == "Darwin":
-        try:
-            from AppKit import NSApplication
-            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        except Exception:
-            pass
-
-
 class SnippingWidget(QWidget):
-    preview_ready = pyqtSignal(object)
+    capture_ready = pyqtSignal(object)
 
     def __init__(self):
         super().__init__()
@@ -105,15 +93,6 @@ class SnippingWidget(QWidget):
         cropped.setDevicePixelRatio(1.0)
 
         try:
-            result = analyze_image(cropped)
-            self.open_preview(result)
+            self.capture_ready.emit(cropped)
         finally:
             self.close()
-
-    def open_preview(self, result: dict):
-        self.preview = PreviewWindow(result["cv_image"], result["ocr_boxes"], result["auto_regions"])
-        _macos_activate()
-        self.preview.show()
-        self.preview.activateWindow()
-        self.preview.raise_()
-        self.preview_ready.emit(self.preview)

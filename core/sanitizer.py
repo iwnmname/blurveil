@@ -41,14 +41,18 @@ SECRET_ASSIGNMENT_RE = re.compile(
 )
 
 
-def qpixmap_to_cv_image(pixmap: QPixmap):
-    qimage = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+def qimage_to_cv_image(qimage: QImage):
+    qimage = qimage.convertToFormat(QImage.Format.Format_RGBA8888)
     width = qimage.width()
     height = qimage.height()
     ptr = qimage.bits()
     ptr.setsize(height * width * 4)
     arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
     return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+
+
+def qpixmap_to_cv_image(pixmap: QPixmap):
+    return qimage_to_cv_image(pixmap.toImage())
 
 
 def cv_image_to_qpixmap(cv_img):
@@ -192,8 +196,7 @@ def _sensitive_line_region(words: list[dict]) -> tuple[int, int, int, int] | Non
     return _union_rect([word["rect"] for word in words])
 
 
-def analyze_image(pixmap: QPixmap) -> dict:
-    image = qpixmap_to_cv_image(pixmap)
+def analyze_cv_image(image) -> dict:
     data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT, config=TESS_CONFIG)
 
     ocr_boxes = []
@@ -235,6 +238,14 @@ def analyze_image(pixmap: QPixmap) -> dict:
         "ocr_boxes": ocr_boxes,
         "auto_regions": _dedupe_regions(auto_regions),
     }
+
+
+def analyze_qimage(qimage: QImage) -> dict:
+    return analyze_cv_image(qimage_to_cv_image(qimage))
+
+
+def analyze_image(pixmap: QPixmap) -> dict:
+    return analyze_cv_image(qpixmap_to_cv_image(pixmap))
 
 
 def render_image(cv_image, regions: list[tuple[int, int, int, int]]) -> QPixmap:
