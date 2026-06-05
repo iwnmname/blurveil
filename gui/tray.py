@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QIcon, QPixmap, QAction
-from PyQt6.QtCore import Qt, QThread, QTimer
+from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtCore import QThread, QTimer
 from gui.analysis import ImageAnalysisWorker, ProcessingDialog
 from gui.errors import safe_slot, show_exception
 from gui.permissions import MacOSPermissionsDialog, should_show_macos_permissions_preflight
@@ -8,7 +8,26 @@ from gui.preview import PreviewWindow
 from gui.snipper import SnippingWidget
 from gui.hotkey import HotkeyHandler, DEFAULT_HOTKEY, format_hotkey_for_display
 from platforms.screen_capture import grab_virtual_desktop
+from pathlib import Path
 import platform
+import sys
+
+
+def _resource_path(relative_path: str) -> Path:
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return base_path / relative_path
+
+
+def app_icon() -> QIcon:
+    icon = QIcon(str(_resource_path("assets/icons/blurveil.ico")))
+    if not icon.isNull():
+        return icon
+
+    icon = QIcon(str(_resource_path("assets/icons/blurveil-icon-1024.png")))
+    if not icon.isNull():
+        return icon
+
+    return QIcon.fromTheme("edit-cut")
 
 
 def _macos_activate():
@@ -40,14 +59,7 @@ class BlurveilTrayApp:
         except Exception as exc:
             self._hotkey_start_error = exc
 
-        if not QIcon.hasThemeIcon("edit-cut"):
-            pixmap = QPixmap(16, 16)
-            pixmap.fill(Qt.GlobalColor.green)
-            icon = QIcon(pixmap)
-        else:
-            icon = QIcon.fromTheme("edit-cut")
-
-        self.tray_icon = QSystemTrayIcon(icon, self.app)
+        self.tray_icon = QSystemTrayIcon(app_icon(), self.app)
         self.tray_icon.setToolTip(f"Blurveil ({format_hotkey_for_display(self.hotkey_handler.hotkey)})")
 
         menu = QMenu()
