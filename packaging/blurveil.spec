@@ -8,7 +8,17 @@ from PyInstaller.utils.hooks import collect_submodules
 
 
 block_cipher = None
-project_root = Path(SPECPATH).parent.parent
+
+
+def _find_project_root() -> Path:
+    spec_path = Path(SPECPATH)
+    for candidate in (Path.cwd(), spec_path, spec_path.parent, spec_path.parent.parent):
+        if (candidate / "main.py").exists():
+            return candidate
+    raise FileNotFoundError("Could not find project root with main.py")
+
+
+project_root = _find_project_root()
 
 
 def _path_from_env(name: str) -> Path | None:
