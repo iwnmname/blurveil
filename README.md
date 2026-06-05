@@ -1,6 +1,33 @@
-# Blurveil — Безопасные скриншоты
+<p align="center">
+  <img src="assets/icons/blurveil-icon-1024.png" alt="Blurveil" width="128" height="128">
+</p>
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
+<h1 align="center">Blurveil</h1>
+
+<p align="center">
+  <strong>Безопасные скриншоты с автоматическим блюром конфиденциальных данных.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/iwnmname/blurveil/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/iwnmname/blurveil/actions/workflows/ci.yml/badge.svg?branch=main">
+  </a>
+  <a href="https://github.com/iwnmname/blurveil/actions/workflows/release.yml">
+    <img alt="Release build" src="https://github.com/iwnmname/blurveil/actions/workflows/release.yml/badge.svg">
+  </a>
+  <a href="https://github.com/iwnmname/blurveil/releases">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/iwnmname/blurveil?sort=semver">
+  </a>
+  <a href="https://github.com/iwnmname/blurveil/releases">
+    <img alt="Downloads" src="https://img.shields.io/github/downloads/iwnmname/blurveil/total">
+  </a>
+  <a href="LICENSE">
+    <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-purple.svg">
+  </a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.12%2B-blue">
+  <img alt="Platforms" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-555">
+  <img alt="Local processing" src="https://img.shields.io/badge/processing-local-2ea44f">
+</p>
 
 Простой инструмент для автоматического сканирования и замазывания конфиденциальных данных на скриншотах. Достаточно нажать сочетание клавиш, чтобы сделать безопасный скрин, готовый для публикации или отправки.
 
