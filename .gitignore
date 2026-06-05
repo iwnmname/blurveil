@@ -32,6 +32,7 @@ ehthumbs.db
 build/
 dist/
 *.spec
+!packaging/*.spec
 
 # --- Logs ---
 *.log
