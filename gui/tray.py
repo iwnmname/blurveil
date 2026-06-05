@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QAction
-from PyQt6.QtCore import QThread, QTimer
+from PyQt6.QtCore import QSize, QThread, QTimer
 from gui.analysis import ImageAnalysisWorker, ProcessingDialog
 from gui.errors import safe_slot, show_exception
 from gui.permissions import MacOSPermissionsDialog, should_show_macos_permissions_preflight
@@ -28,6 +28,20 @@ def app_icon() -> QIcon:
         return icon
 
     return QIcon.fromTheme("edit-cut")
+
+
+def tray_icon() -> QIcon:
+    if platform.system() == "Darwin":
+        icon = QIcon()
+        for size in (16, 18, 20, 24, 32, 36, 48, 64, 128, 256, 512, 1024):
+            path = _resource_path(f"assets/icons/tray/blurveil-tray-template-{size}.png")
+            if path.exists():
+                icon.addFile(str(path), QSize(size, size))
+        if not icon.isNull():
+            icon.setIsMask(True)
+            return icon
+
+    return app_icon()
 
 
 def _macos_activate():
@@ -59,7 +73,7 @@ class BlurveilTrayApp:
         except Exception as exc:
             self._hotkey_start_error = exc
 
-        self.tray_icon = QSystemTrayIcon(app_icon(), self.app)
+        self.tray_icon = QSystemTrayIcon(tray_icon(), self.app)
         self.tray_icon.setToolTip(f"Blurveil ({format_hotkey_for_display(self.hotkey_handler.hotkey)})")
 
         menu = QMenu()
