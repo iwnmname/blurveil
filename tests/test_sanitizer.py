@@ -7,7 +7,10 @@ import os
 import numpy as np
 from PyQt6.QtGui import QColor, QImage
 
+from core import analyzer
 from core import detectors
+from core.detectors import objects
+from core import regions
 from core import sanitizer
 
 
@@ -29,7 +32,7 @@ class SensitivePatternTests(unittest.TestCase):
 
         for sample in samples:
             with self.subTest(sample=sample):
-                self.assertTrue(sanitizer._matches_direct_sensitive_value(sample))
+                self.assertTrue(analyzer._matches_direct_sensitive_value(sample))
 
     def test_rejects_common_false_positives(self):
         samples = [
@@ -42,11 +45,11 @@ class SensitivePatternTests(unittest.TestCase):
 
         for sample in samples:
             with self.subTest(sample=sample):
-                self.assertFalse(sanitizer._matches_direct_sensitive_value(sample))
+                self.assertFalse(analyzer._matches_direct_sensitive_value(sample))
 
     def test_luhn_validation(self):
-        self.assertTrue(sanitizer._looks_like_luhn_number("4111 1111 1111 1111"))
-        self.assertFalse(sanitizer._looks_like_luhn_number("4111 1111 1111 1112"))
+        self.assertTrue(analyzer._looks_like_luhn_number("4111 1111 1111 1111"))
+        self.assertFalse(analyzer._looks_like_luhn_number("4111 1111 1111 1112"))
 
 
 class RegionHelpersTests(unittest.TestCase):
@@ -57,7 +60,7 @@ class RegionHelpersTests(unittest.TestCase):
             {"text": "other", "rect": (10, 40, 20, 5), "block_num": 1, "par_num": 1, "line_num": 2},
         ]
 
-        lines = sanitizer._line_groups(entries)
+        lines = analyzer._line_groups(entries)
 
         self.assertEqual(["token:", "value"], [word["text"] for word in lines[0]])
         self.assertEqual(["other"], [word["text"] for word in lines[1]])
@@ -69,12 +72,12 @@ class RegionHelpersTests(unittest.TestCase):
             {"text": "secret-value", "rect": (60, 0, 50, 5)},
         ]
 
-        self.assertEqual((20, 0, 90, 5), sanitizer._sensitive_line_region(words))
+        self.assertEqual((20, 0, 90, 5), analyzer._sensitive_line_region(words))
 
     def test_dedupes_regions_preserving_order(self):
-        regions = [(1, 2, 3, 4), (5, 6, 7, 8), (1, 2, 3, 4)]
+        sample_regions = [(1, 2, 3, 4), (5, 6, 7, 8), (1, 2, 3, 4)]
 
-        self.assertEqual([(1, 2, 3, 4), (5, 6, 7, 8)], sanitizer._dedupe_regions(regions))
+        self.assertEqual([(1, 2, 3, 4), (5, 6, 7, 8)], regions.dedupe_regions(sample_regions))
 
 
 class ImageConversionTests(unittest.TestCase):
@@ -112,9 +115,9 @@ class ImageConversionTests(unittest.TestCase):
         }
         image = np.zeros((100, 220, 3), dtype=np.uint8)
 
-        with patch.object(sanitizer.pytesseract, "image_to_data", return_value=fake_ocr):
-            with patch.object(sanitizer, "detect_object_regions", return_value=[]):
-                result = sanitizer.analyze_cv_image(image)
+        with patch.object(analyzer.pytesseract, "image_to_data", return_value=fake_ocr):
+            with patch.object(analyzer, "detect_object_regions", return_value=[]):
+                result = analyzer.analyze_cv_image(image)
 
         self.assertEqual(["password:", "secret-value"], [box["text"] for box in result["ocr_boxes"]])
         self.assertIn((6, 16, 168, 18), result["auto_regions"])
@@ -130,9 +133,9 @@ class ImageConversionTests(unittest.TestCase):
         }
         image = np.zeros((100, 100, 3), dtype=np.uint8)
 
-        with patch.object(sanitizer.pytesseract, "image_to_data", return_value=fake_ocr):
-            with patch.object(sanitizer, "detect_object_regions", return_value=[(10, 20, 30, 40)]):
-                result = sanitizer.analyze_cv_image(image)
+        with patch.object(analyzer.pytesseract, "image_to_data", return_value=fake_ocr):
+            with patch.object(analyzer, "detect_object_regions", return_value=[(10, 20, 30, 40)]):
+                result = analyzer.analyze_cv_image(image)
 
         self.assertEqual([(10, 20, 30, 40)], result["auto_regions"])
 
@@ -147,7 +150,7 @@ class ObjectDetectorTests(unittest.TestCase):
 
         image = np.zeros((20, 20, 3), dtype=np.uint8)
 
-        self.assertEqual([(1, 2, 3, 4)], sanitizer.detect_object_regions(image, detectors=(FakeDetector(),)))
+        self.assertEqual([(1, 2, 3, 4)], detectors.detect_object_regions(image, detectors=(FakeDetector(),)))
 
     def test_face_detector_pads_and_clamps_regions(self):
         class FakeCascade:
@@ -163,7 +166,7 @@ class ObjectDetectorTests(unittest.TestCase):
             detector = detectors.FaceDetector(cascade_path=cascade_path)
             image = np.zeros((40, 50, 3), dtype=np.uint8)
 
-            with patch.object(detectors.cv2, "CascadeClassifier", return_value=FakeCascade()):
+            with patch.object(objects.cv2, "CascadeClassifier", return_value=FakeCascade()):
                 result = detector.detect(image)
 
         self.assertEqual([detectors.Detection(rect=(0, 0, 24, 37), kind="face", label="Face")], result)
@@ -177,7 +180,7 @@ class ObjectDetectorTests(unittest.TestCase):
 
 class RuntimeTesseractTests(unittest.TestCase):
     def test_configures_bundled_tesseract_when_frozen(self):
-        original_cmd = sanitizer.pytesseract.pytesseract.tesseract_cmd
+        original_cmd = analyzer.pytesseract.pytesseract.tesseract_cmd
         original_tessdata = os.environ.get("TESSDATA_PREFIX")
 
         try:
@@ -188,15 +191,15 @@ class RuntimeTesseractTests(unittest.TestCase):
                 tesseract_path.write_text("", encoding="utf-8")
                 tessdata_path.mkdir()
 
-                with patch.object(sanitizer.sys, "frozen", True, create=True):
-                    with patch.object(sanitizer.sys, "_MEIPASS", str(bundle_dir), create=True):
-                        with patch.object(sanitizer.sys, "platform", "darwin"):
-                            sanitizer._configure_bundled_tesseract()
+                with patch.object(analyzer.sys, "frozen", True, create=True):
+                    with patch.object(analyzer.sys, "_MEIPASS", str(bundle_dir), create=True):
+                        with patch.object(analyzer.sys, "platform", "darwin"):
+                            analyzer._configure_bundled_tesseract()
 
-                self.assertEqual(str(tesseract_path), sanitizer.pytesseract.pytesseract.tesseract_cmd)
+                self.assertEqual(str(tesseract_path), analyzer.pytesseract.pytesseract.tesseract_cmd)
                 self.assertEqual(str(tessdata_path), os.environ.get("TESSDATA_PREFIX"))
         finally:
-            sanitizer.pytesseract.pytesseract.tesseract_cmd = original_cmd
+            analyzer.pytesseract.pytesseract.tesseract_cmd = original_cmd
             if original_tessdata is None:
                 os.environ.pop("TESSDATA_PREFIX", None)
             else:

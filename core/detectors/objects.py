@@ -1,54 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 import cv2
 import numpy as np
 
+from core.detectors.base import Detection, ObjectDetector
+from core.regions import Rect, pad_rect_xy
 
-Rect = tuple[int, int, int, int]
 
 FACE_CASCADE_FILENAME = "haarcascade_frontalface_default.xml"
 FACE_PAD_RATIO = 0.18
 QR_PAD = 8
-
-
-@dataclass(frozen=True)
-class Detection:
-    rect: Rect
-    kind: str
-    label: str | None = None
-    score: float | None = None
-
-
-class ObjectDetector(Protocol):
-    name: str
-
-    def detect(self, cv_img: np.ndarray) -> list[Detection]:
-        ...
-
-
-def clamp_rect(rect: Rect, image_shape: tuple[int, ...]) -> Rect | None:
-    x, y, w, h = rect
-    height, width = image_shape[:2]
-
-    x_min = max(0, x)
-    y_min = max(0, y)
-    x_max = min(width, x + w)
-    y_max = min(height, y + h)
-
-    if x_max <= x_min or y_max <= y_min:
-        return None
-    return (x_min, y_min, x_max - x_min, y_max - y_min)
-
-
-def pad_rect(rect: Rect, image_shape: tuple[int, ...], pad_x: int, pad_y: int | None = None) -> Rect | None:
-    if pad_y is None:
-        pad_y = pad_x
-    x, y, w, h = rect
-    return clamp_rect((x - pad_x, y - pad_y, w + pad_x * 2, h + pad_y * 2), image_shape)
 
 
 class QRCodeDetector:
@@ -68,7 +31,7 @@ class QRCodeDetector:
             y_min = int(pts[:, 1].min())
             x_max = int(pts[:, 0].max())
             y_max = int(pts[:, 1].max())
-            rect = pad_rect((x_min, y_min, x_max - x_min, y_max - y_min), cv_img.shape, QR_PAD)
+            rect = pad_rect_xy((x_min, y_min, x_max - x_min, y_max - y_min), cv_img.shape, QR_PAD)
             if rect is not None:
                 detections.append(Detection(rect=rect, kind=self.name, label="QR code"))
 
@@ -111,7 +74,7 @@ class FaceDetector:
         for x, y, w, h in faces:
             pad_x = max(4, int(w * FACE_PAD_RATIO))
             pad_y = max(4, int(h * FACE_PAD_RATIO))
-            rect = pad_rect((int(x), int(y), int(w), int(h)), cv_img.shape, pad_x, pad_y)
+            rect = pad_rect_xy((int(x), int(y), int(w), int(h)), cv_img.shape, pad_x, pad_y)
             if rect is not None:
                 detections.append(Detection(rect=rect, kind=self.name, label="Face"))
         return detections
@@ -151,3 +114,18 @@ def detect_objects(
     for detector in detectors:
         detections.extend(detector.detect(cv_img))
     return detections
+
+
+def detect_object_regions(
+    cv_img: np.ndarray,
+    detectors: tuple[ObjectDetector, ...] | list[ObjectDetector] = DEFAULT_OBJECT_DETECTORS,
+) -> list[Rect]:
+    return [detection.rect for detection in detect_objects(cv_img, detectors)]
+
+
+def detect_qr_codes(cv_img: np.ndarray) -> list[Rect]:
+    return [detection.rect for detection in QRCodeDetector().detect(cv_img)]
+
+
+def detect_faces(cv_img: np.ndarray) -> list[Rect]:
+    return [detection.rect for detection in FaceDetector().detect(cv_img)]
