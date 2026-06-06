@@ -21,6 +21,8 @@ def main():
     from gui.tray import BlurveilTrayApp, app_icon
 
     app = QApplication(sys.argv)
+    app.setOrganizationName("Blurveil")
+    app.setApplicationName("Blurveil")
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(app_icon())
 
