@@ -3,6 +3,7 @@ from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtCore import QSize, QThread, QTimer
 from gui.analysis import ImageAnalysisWorker, ProcessingDialog
 from gui.errors import safe_slot, show_exception
+from gui.onboarding import OnboardingDialog, mark_onboarding_seen, should_show_onboarding
 from gui.permissions import MacOSPermissionsDialog, should_show_macos_permissions_preflight
 from gui.preview import PreviewWindow
 from gui.snipper import SnippingWidget
@@ -63,6 +64,7 @@ class BlurveilTrayApp:
         self._analysis_worker = None
         self._processing_dialog = None
         self._permissions_dialog = None
+        self._onboarding_dialog = None
         self._previews: list = []
         self._hotkey_start_error = None
 
@@ -85,10 +87,18 @@ class BlurveilTrayApp:
         self.action_fullscreen.triggered.connect(self.capture_fullscreen)
         menu.addAction(self.action_fullscreen)
 
+        menu.addSeparator()
+
+        action_onboarding = QAction("Как пользоваться", self.app)
+        action_onboarding.triggered.connect(lambda: self._show_onboarding(force=True))
+        menu.addAction(action_onboarding)
+
         if platform.system() == "Darwin":
             action_permissions = QAction("Проверить разрешения macOS", self.app)
             action_permissions.triggered.connect(lambda: self._show_permissions_dialog(force=True))
             menu.addAction(action_permissions)
+
+        menu.addSeparator()
 
         action_quit = QAction("Выход", self.app)
         action_quit.triggered.connect(self.quit_app)
@@ -97,7 +107,9 @@ class BlurveilTrayApp:
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.show()
 
-        if platform.system() == "Darwin":
+        if should_show_onboarding():
+            QTimer.singleShot(0, self._show_onboarding_on_first_launch)
+        elif platform.system() == "Darwin":
             QTimer.singleShot(0, self._show_permissions_preflight)
         if self._hotkey_start_error is not None:
             QTimer.singleShot(0, self._show_hotkey_start_error)
@@ -241,6 +253,41 @@ class BlurveilTrayApp:
 
     def _show_permissions_preflight(self):
         self._show_permissions_dialog(force=False)
+
+    def _show_onboarding_on_first_launch(self):
+        if not should_show_onboarding():
+            if platform.system() == "Darwin":
+                self._show_permissions_preflight()
+            return
+        self._show_onboarding(force=False)
+
+    def _show_onboarding(self, force: bool):
+        if not force and not should_show_onboarding():
+            return
+        if self._onboarding_dialog is not None and self._onboarding_dialog.isVisible():
+            _macos_activate()
+            self._onboarding_dialog.activateWindow()
+            self._onboarding_dialog.raise_()
+            return
+
+        dialog = OnboardingDialog(format_hotkey_for_display(self.hotkey_handler.hotkey))
+        self._onboarding_dialog = dialog
+        dialog.start_requested.connect(self.start_snipping)
+        dialog.finished.connect(lambda: self._on_onboarding_finished(dialog, force))
+
+        _macos_activate()
+        dialog.show()
+        dialog.activateWindow()
+        dialog.raise_()
+
+        if not force:
+            mark_onboarding_seen()
+
+    def _on_onboarding_finished(self, dialog, force: bool):
+        if self._onboarding_dialog is dialog:
+            self._onboarding_dialog = None
+        if not force and platform.system() == "Darwin":
+            QTimer.singleShot(0, self._show_permissions_preflight)
 
     def _show_permissions_dialog(self, force: bool):
         if platform.system() != "Darwin":
